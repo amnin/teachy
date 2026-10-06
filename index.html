@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Teachy</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main id="app"></main>
+
+  <!-- Kärnan: router, startsida och gemensamma hjälpfunktioner -->
+  <script src="js/app.js"></script>
+
+  <!-- Gemensam data -->
+  <script src="data/words.js"></script>
+
+  <!-- Spel: lägg till nya spel här -->
+  <!-- Svenska -->
+  <script src="games/ljuda/ljuda.js"></script>
+  <script src="games/samma-ljud/samma-ljud.js"></script>
+  <script src="games/rimma/rimma.js"></script>
+  <!-- Matematik -->
+  <script src="games/hur-manga/hur-manga.js"></script>
+  <script src="games/monster/monster.js"></script>
+  <script src="games/lagesord/lagesord.js"></script>
+  <script src="games/rakna/rakna.js"></script>
+  <!-- Natur och samhälle -->
+  <script src="games/sortera/sortera.js"></script>
+
+  <script>Teachy.start();</script>
+</body>
+</html>
