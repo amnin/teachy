@@ -63,6 +63,7 @@
   Teachy.registerGame({
     id: 'rakna',
     title: 'Räkna',
+    grade: 0,
     subject: 'Matematik',
     icon: '➕',
     color: '#2bb673',

@@ -10,6 +10,12 @@
 (function () {
   'use strict';
 
+  // Årskurser – varje spel anger sin med grade: 0, 1, ...
+  const GRADES = [
+    { id: 0, name: 'Årskurs 0', sub: 'Förskoleklass' },
+    { id: 1, name: 'Årskurs 1', sub: 'Första klass' }
+  ];
+
   const games = [];
   let cleanup = null;
 
@@ -704,16 +710,47 @@
     ]);
   }
 
+  // Vald årskurs på startsidan – sparas per profil
+  function selectedGrade(profile) {
+    const id = store.get('grade:' + profile.id, GRADES[0].id);
+    return GRADES.some(g => g.id === id) ? id : GRADES[0].id;
+  }
+
   function renderHub(app, profile) {
+    const grade = selectedGrade(profile);
+
     app.append(profileBar(profile));
     app.append(el('header', { class: 'hub-head' }, [
       el('h1', { text: 'Teachy' }),
       el('p', { text: 'Vad vill du spela idag, ' + profile.name + '?' })
     ]));
 
-    const subjects = [...new Set(games.map(g => g.subject))];
+    app.append(el('nav', { class: 'grade-tabs', 'aria-label': 'Årskurs' }, GRADES.map(g =>
+      el('button', {
+        class: 'grade-tab' + (g.id === grade ? ' selected' : ''), type: 'button',
+        'aria-pressed': String(g.id === grade),
+        onclick: () => {
+          store.set('grade:' + profile.id, g.id);
+          route();
+        }
+      }, [
+        el('span', { class: 'grade-tab-name', text: g.name }),
+        el('span', { class: 'grade-tab-sub', text: g.sub })
+      ])
+    )));
+
+    const gradeGames = games.filter(g => g.grade === grade);
+    if (!gradeGames.length) {
+      app.append(el('div', { class: 'empty-grade' }, [
+        el('div', { class: 'intro-icon', text: '🚧' }),
+        el('p', { text: 'Här kommer det snart spel!' })
+      ]));
+      return;
+    }
+
+    const subjects = [...new Set(gradeGames.map(g => g.subject))];
     for (const subject of subjects) {
-      const cards = games.filter(g => g.subject === subject).map(g => {
+      const cards = gradeGames.filter(g => g.subject === subject).map(g => {
         const stars = progress.game(g.id, profile.id).stars;
         return el('a', { class: 'game-card', href: '#/' + g.id, style: '--accent:' + (g.color || '#7c5cff') }, [
           el('span', { class: 'game-card-icon', text: g.icon }),
@@ -813,7 +850,15 @@
         stat('🎮', totalRounds, 'rundor'),
         stat('📅', lastDate ? formatDate(lastDate) : '–', 'senast spelat')
       ]),
-      ...sections,
+      // Spelen grupperade per årskurs
+      ...GRADES.flatMap(grade => {
+        const own = games.filter(g => g.grade === grade.id);
+        if (!own.length) return [];
+        return [
+          el('h2', { class: 'grade-heading', text: grade.name }),
+          ...own.map(g => sections[games.indexOf(g)])
+        ];
+      }),
       danger
     ]));
   }

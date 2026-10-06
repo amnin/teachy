@@ -42,6 +42,7 @@
   Teachy.registerGame({
     id: GAME_ID,
     title: 'Mönster',
+    grade: 0,
     subject: 'Matematik',
     icon: '🔴',
     color: '#9b5de5',

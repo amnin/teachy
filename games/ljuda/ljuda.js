@@ -18,6 +18,7 @@
   Teachy.registerGame({
     id: 'ljuda',
     title: 'Ljuda',
+    grade: 0,
     subject: 'Svenska',
     icon: '🔤',
     color: '#ff8a3d',

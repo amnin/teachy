@@ -51,6 +51,7 @@
   Teachy.registerGame({
     id: GAME_ID,
     title: 'Samma ljud',
+    grade: 0,
     subject: 'Svenska',
     icon: '🧩',
     color: '#4cc9f0',

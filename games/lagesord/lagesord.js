@@ -92,6 +92,7 @@
   Teachy.registerGame({
     id: GAME_ID,
     title: 'Lägesord',
+    grade: 0,
     subject: 'Matematik',
     icon: '📦',
     color: '#4361ee',

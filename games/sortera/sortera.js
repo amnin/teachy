@@ -46,6 +46,7 @@
   Teachy.registerGame({
     id: GAME_ID,
     title: 'Sortera',
+    grade: 0,
     subject: 'Natur och samhälle',
     icon: '🧺',
     color: '#06a77d',

@@ -40,6 +40,7 @@
   Teachy.registerGame({
     id: GAME_ID,
     title: 'Rimma',
+    grade: 0,
     subject: 'Svenska',
     icon: '🎵',
     color: '#f15bb5',

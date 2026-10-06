@@ -53,6 +53,7 @@
   Teachy.registerGame({
     id: GAME_ID,
     title: 'Hur många?',
+    grade: 0,
     subject: 'Matematik',
     icon: '🔢',
     color: '#ffb627',

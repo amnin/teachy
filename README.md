@@ -33,7 +33,8 @@ games/<spel>/         Ett spel per mapp
    Teachy.registerGame({
      id: 'mitt-spel',           // blir adressen #/mitt-spel
      title: 'Mitt spel',
-     subject: 'Matematik',      // spel grupperas per ämne på startsidan
+     grade: 1,                  // årskurs: 0 = förskoleklass, 1 = åk 1 (se GRADES i js/app.js)
+     subject: 'Matematik',      // spel grupperas per ämne inom årskursen
      icon: '➕',
      color: '#3ddc97',
      description: 'Kort beskrivning',
@@ -64,7 +65,7 @@ framstegssidan (Ljuda visar t.ex. träffsäkerhet per bokstav).
 
 Allt sparas i webbläsarens `localStorage`, alltså per enhet och webbläsare.
 
-## Spel
+## Spel – Årskurs 0 (förskoleklass)
 
 - **Ljuda** (Svenska) – en bild visas och läses upp, dra den till bokstaven ordet
   börjar på. Tre nivåer (3, 4 eller 6 bokstäver), 10 ord per runda.
