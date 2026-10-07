@@ -73,12 +73,24 @@
   }
 
   // ---------- Tal (svensk röst, eller annat språk t.ex. 'en-GB') ----------
+  //
+  // Två sorters röster:
+  // - webbläsarens röster (speechSynthesis)
+  // - Macens egna röster via server.py (t.ex. Alva Premium). Safari släpper bara
+  //   fram standardrösterna till webbsidor, så de bättre hämtas som ljud från servern.
 
   const canSpeak = 'speechSynthesis' in window;
   let voices = [];
+  let macVoices = []; // tom om Teachy inte körs med server.py
+
+  // Säger till inställningssidan när listan med röster ändras
+  function voicesChanged() {
+    window.dispatchEvent(new Event('teachy:voices'));
+  }
 
   function loadVoices() {
     voices = speechSynthesis.getVoices();
+    voicesChanged();
   }
 
   if (canSpeak) {
@@ -86,12 +98,20 @@
     speechSynthesis.addEventListener('voiceschanged', loadVoices);
   }
 
+  fetch('api/voices')
+    .then(r => (r.ok ? r.json() : []))
+    .then(list => {
+      macVoices = list.filter(v => v.lang.toLowerCase().startsWith('sv'));
+      voicesChanged();
+    })
+    .catch(() => { /* ingen server.py – webbläsarens röster räcker */ });
+
   // Bästa rösten för ett språk: exakt match (en-GB) före samma språk (en-US),
   // och naturliga röster (Premium/Enhanced/Natural) före de enkla standardrösterna
   function voiceQuality(v) {
     // Safari kallar alla versioner bara "Alva" – kvaliteten syns i voiceURI,
     // t.ex. com.apple.voice.premium.sv-SE.Alva
-    const name = (v.name + ' ' + v.voiceURI).toLowerCase();
+    const name = (v.name + ' ' + (v.voiceURI || '')).toLowerCase();
     if (/natural|neural|premium/.test(name)) return 3;
     if (/enhanced|förbättrad|siri/.test(name)) return 2;
     if (v.localService === false) return 1; // nätröster låter oftast bättre
@@ -105,19 +125,26 @@
       best(voices.filter(v => norm(v).startsWith(lang.slice(0, 2).toLowerCase())));
   }
 
-  // Alla svenska röster, bästa först – för inställningssidan
+  // Alla svenska röster som valbara alternativ, bästa först:
+  // { id, name, quality, mac } för Macens röster, { id, name, quality, voice } för webbläsarens
   function swedishVoices() {
-    return voices
+    const mac = macVoices.map(v => ({
+      id: 'mac:' + v.name, name: v.name, quality: voiceQuality({ name: v.name }), mac: true
+    }));
+    const browser = voices
       .filter(v => v.lang.toLowerCase().startsWith('sv'))
       // Safari kan lista samma röst flera gånger
       .filter((v, i, list) => list.findIndex(o => o.voiceURI === v.voiceURI) === i)
-      .sort((a, b) => voiceQuality(b) - voiceQuality(a) || a.name.localeCompare(b.name, 'sv'));
+      .map(v => ({ id: v.voiceURI, name: v.name, quality: voiceQuality(v), voice: v }));
+    return mac.concat(browser).sort((a, b) =>
+      b.quality - a.quality || Number(!!b.mac) - Number(!!a.mac) || a.name.localeCompare(b.name, 'sv'));
   }
 
   // Svensk röst vald i inställningarna, annars den bästa som finns
   function swedishVoice() {
+    const list = swedishVoices();
     const chosen = store.get('voice', null);
-    return voices.find(v => v.voiceURI === chosen) || voiceFor('sv-SE');
+    return list.find(o => o.id === chosen) || list[0] || null;
   }
 
   // Uppläsningstakt vald i inställningarna
@@ -128,24 +155,104 @@
   ];
 
   function speak(text, lang) {
-    if (!canSpeak || isMuted()) return;
+    if (isMuted()) return;
+    lang = lang || 'sv-SE';
+    sayWith(lang.toLowerCase().startsWith('sv') ? swedishVoice() : null, text, lang);
+  }
+
+  // Läs upp med ett visst alternativ från swedishVoices() (null = bästa webbläsarrösten)
+  function sayWith(option, text, lang) {
+    stopSpeech();
+    if (option && option.mac) {
+      playMac(text, option.name, () => speakBrowser(text, lang, voiceFor(lang)));
+    } else {
+      speakBrowser(text, lang, option ? option.voice : voiceFor(lang));
+    }
+  }
+
+  function speakBrowser(text, lang, voice) {
+    if (!canSpeak) return;
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = lang || 'sv-SE';
-    const voice = u.lang.toLowerCase().startsWith('sv') ? swedishVoice() : voiceFor(u.lang);
+    u.lang = lang;
     if (voice) u.voice = voice;
     u.rate = store.get('rate', 0.8);
     speechSynthesis.speak(u);
+  }
+
+  let speechId = 0;        // ökas vid varje ny uppläsning, så att svar som kommer för sent ignoreras
+  let speechSource = null; // ljudet som spelas just nu
+  const macAudio = new Map(); // färdiga ljud, så att samma fras inte hämtas igen
+
+  function playMac(text, voice, fallback) {
+    const id = ++speechId;
+    const key = new URLSearchParams({ text, voice, rate: store.get('rate', 0.8) }).toString();
+    let ctx;
+    try {
+      ctx = audioContext();
+    } catch (e) {
+      fallback();
+      return;
+    }
+    if (!macAudio.has(key)) {
+      if (macAudio.size > 150) macAudio.delete(macAudio.keys().next().value);
+      macAudio.set(key, fetch('api/tts?' + key)
+        .then(r => {
+          if (!r.ok) throw new Error('tts ' + r.status);
+          return r.arrayBuffer();
+        })
+        // Callback-formen fungerar även i äldre Safari
+        .then(data => new Promise((resolve, reject) => ctx.decodeAudioData(data, resolve, reject))));
+    }
+    macAudio.get(key)
+      .then(buffer => {
+        if (id !== speechId) return;
+        if (ctx.state !== 'running') ctx.resume();
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(ctx.destination);
+        source.start();
+        speechSource = source;
+      })
+      .catch(() => {
+        macAudio.delete(key);
+        if (id === speechId) fallback();
+      });
+  }
+
+  function stopSpeech() {
+    speechId++;
+    if (speechSource) {
+      try { speechSource.stop(); } catch (e) { /* redan slut */ }
+      speechSource = null;
+    }
+    if (canSpeak) speechSynthesis.cancel();
   }
 
   // ---------- Ljudeffekter ----------
 
   let audioCtx = null;
 
+  function audioContext() {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    return audioCtx;
+  }
+
+  // Webbläsare (särskilt Safari) spelar bara ljud efter att man tryckt på något –
+  // väck ljudet vid första trycket så att uppläsningen sedan fungerar
+  function unlockAudio() {
+    try {
+      const ctx = audioContext();
+      if (ctx.state !== 'running') ctx.resume();
+    } catch (e) { /* inget ljud – inget problem */ }
+  }
+  document.addEventListener('pointerdown', unlockAudio, true);
+  document.addEventListener('keydown', unlockAudio, true);
+
   function chime(kind) {
     if (isMuted()) return;
     try {
-      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      audioContext();
       const right = kind === 'right';
       const notes = right ? [660, 880, 1320] : [240, 190];
       notes.forEach((freq, i) => {
@@ -195,7 +302,7 @@
 
   function setMuted(muted) {
     store.set('muted', muted);
-    if (muted && canSpeak) speechSynthesis.cancel();
+    if (muted) stopSpeech();
     document.body.classList.toggle('muted', muted);
     document.querySelectorAll('.sound-toggle').forEach(updateSoundToggle);
   }
@@ -1252,14 +1359,8 @@
       ]);
     }
 
-    function tryVoice(voice) {
-      if (!canSpeak) return;
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(sample);
-      u.lang = 'sv-SE';
-      if (voice) u.voice = voice;
-      u.rate = store.get('rate', 0.8);
-      speechSynthesis.speak(u);
+    function tryVoice(option) {
+      sayWith(option, sample, 'sv-SE');
     }
 
     // Hopfällbar instruktion med numrerade steg
@@ -1270,23 +1371,24 @@
       ]);
     }
 
-    function qualityName(v) {
-      return ['Standard', 'Nätröst', 'Förbättrad', 'Naturlig'][voiceQuality(v)];
+    function qualityName(option) {
+      return ['Standard', 'Nätröst', 'Förbättrad', 'Naturlig'][option.quality] +
+        (option.mac ? ' · Mac-röst' : ' · webbläsarens röst');
     }
 
     function drawVoices() {
       const list = swedishVoices();
       const chosen = store.get('voice', null);
-      const isChosen = v => v.voiceURI === chosen;
+      const isChosen = o => o.id === chosen;
       const auto = !list.some(isChosen);
-      const select = uri => () => {
-        if (uri) store.set('voice', uri);
+      const select = id => () => {
+        if (id) store.set('voice', id);
         else store.remove('voice');
         drawVoices();
         speak(sample);
       };
 
-      if (!canSpeak) {
+      if (!canSpeak && !list.length) {
         voiceList.replaceChildren(el('p', { class: 'muted', text: 'Den här webbläsaren kan inte läsa upp text.' }));
         return;
       }
@@ -1295,13 +1397,13 @@
         return;
       }
       voiceList.replaceChildren(
-        choice('Automatisk', 'Bästa rösten just nu: ' + (voiceFor('sv-SE') || {}).name, auto, select(null),
-          () => tryVoice(voiceFor('sv-SE'))),
-        ...list.map(v => {
+        choice('Automatisk', 'Bästa rösten just nu: ' + list[0].name, auto, select(null),
+          () => tryVoice(list[0])),
+        ...list.map(o => {
           // Flera röster med samma namn (vanligt i Safari) – visa det tekniska namnet så de går att skilja åt
-          const twin = list.some(o => o !== v && o.name === v.name);
-          const sub = qualityName(v) + (twin ? ' · ' + v.voiceURI : '');
-          return choice(v.name, sub, isChosen(v), select(v.voiceURI), () => tryVoice(v));
+          const twin = list.some(other => other !== o && other.name === o.name && other.mac === o.mac);
+          const sub = qualityName(o) + (twin ? ' · ' + o.id : '');
+          return choice(o.name, sub, isChosen(o), select(o.id), () => tryVoice(o));
         })
       );
     }
@@ -1319,10 +1421,8 @@
     drawRates();
 
     // Rösterna laddas ibland in en stund efter att sidan öppnats
-    if (canSpeak) {
-      speechSynthesis.addEventListener('voiceschanged', drawVoices);
-      cleanup = () => speechSynthesis.removeEventListener('voiceschanged', drawVoices);
-    }
+    window.addEventListener('teachy:voices', drawVoices);
+    cleanup = () => window.removeEventListener('teachy:voices', drawVoices);
 
     app.append(el('div', { class: 'screen' }, [
       el('header', { class: 'game-bar' }, [
@@ -1351,7 +1451,7 @@
           'Tryck på ⓘ bredvid Systemröst (på äldre macOS: Systemröst → Anpassa…).',
           'Välj Svenska i listan.',
           'Ladda ner Alva, Klara eller Oskar – välj gärna versionen Premium eller Förbättrad.',
-          'Safari visar bara den enkla standardrösten för webbsidor. Använd Chrome eller Microsoft Edge för att få de bättre rösterna.'
+          'Starta Teachy med python3 server.py (i stället för python3 -m http.server). Då dyker rösterna upp här som Mac-röst – även i Safari.'
         ]),
         howTo('🪟 Windows-dator', [
           'Öppna Start → Inställningar.',
@@ -1385,7 +1485,7 @@
       cleanup();
       cleanup = null;
     }
-    if (canSpeak) speechSynthesis.cancel();
+    stopSpeech();
 
     const app = document.getElementById('app');
     app.replaceChildren();

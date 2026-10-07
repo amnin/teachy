@@ -7,10 +7,16 @@ Lärospel för skolan som webapp. Ren HTML/CSS/JavaScript – inget byggsteg och
 Från projektmappen:
 
 ```sh
-python3 -m http.server 8000
+python3 server.py
 ```
 
 Öppna sedan <http://localhost:8000> i webbläsaren.
+
+`server.py` fungerar som `python3 -m http.server`, men låter dessutom Teachy läsa upp
+med Macens egna röster, t.ex. **Alva (Premium)**. Safari släpper bara fram standardrösten
+till webbsidor, så servern gör ljudet med Macens `say` i stället. Välj röst under ⚙️ Inställningar.
+Uppläst ljud sparas i `.tts-cache/` så att samma fras går snabbt nästa gång.
+(`python3 -m http.server 8000` fungerar fortfarande, men då bara med webbläsarens röster.)
 Vill du spela på en iPad i samma nätverk öppnar du `http://<datorns-ip>:8000` där.
 
 (Det går också att dubbelklicka på `index.html`, men en server är att föredra.)
