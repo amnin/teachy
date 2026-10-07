@@ -1026,3 +1026,9 @@ body.muted .btn-listen { display: none; }
 }
 .choice-mark { font-size: 20px; color: var(--primary); }
 .choice-label { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+
+.how-to { margin-top: 10px; border: 2px solid var(--line); border-radius: 16px; background: var(--card); }
+.how-to summary { padding: 12px 16px; font-weight: 800; cursor: pointer; }
+.how-to[open] summary { border-bottom: 2px solid var(--line); }
+.how-to ol { margin: 0; padding: 12px 16px 14px 40px; }
+.how-to li { margin: 4px 0; }

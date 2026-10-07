@@ -89,7 +89,9 @@
   // Bästa rösten för ett språk: exakt match (en-GB) före samma språk (en-US),
   // och naturliga röster (Premium/Enhanced/Natural) före de enkla standardrösterna
   function voiceQuality(v) {
-    const name = v.name.toLowerCase();
+    // Safari kallar alla versioner bara "Alva" – kvaliteten syns i voiceURI,
+    // t.ex. com.apple.voice.premium.sv-SE.Alva
+    const name = (v.name + ' ' + v.voiceURI).toLowerCase();
     if (/natural|neural|premium/.test(name)) return 3;
     if (/enhanced|förbättrad|siri/.test(name)) return 2;
     if (v.localService === false) return 1; // nätröster låter oftast bättre
@@ -107,6 +109,8 @@
   function swedishVoices() {
     return voices
       .filter(v => v.lang.toLowerCase().startsWith('sv'))
+      // Safari kan lista samma röst flera gånger
+      .filter((v, i, list) => list.findIndex(o => o.voiceURI === v.voiceURI) === i)
       .sort((a, b) => voiceQuality(b) - voiceQuality(a) || a.name.localeCompare(b.name, 'sv'));
   }
 
@@ -1258,6 +1262,14 @@
       speechSynthesis.speak(u);
     }
 
+    // Hopfällbar instruktion med numrerade steg
+    function howTo(title, steps) {
+      return el('details', { class: 'how-to' }, [
+        el('summary', { text: title }),
+        el('ol', null, steps.map(step => el('li', { text: step })))
+      ]);
+    }
+
     function qualityName(v) {
       return ['Standard', 'Nätröst', 'Förbättrad', 'Naturlig'][voiceQuality(v)];
     }
@@ -1285,7 +1297,12 @@
       voiceList.replaceChildren(
         choice('Automatisk', 'Bästa rösten just nu: ' + (voiceFor('sv-SE') || {}).name, auto, select(null),
           () => tryVoice(voiceFor('sv-SE'))),
-        ...list.map(v => choice(v.name, qualityName(v), isChosen(v), select(v.voiceURI), () => tryVoice(v)))
+        ...list.map(v => {
+          // Flera röster med samma namn (vanligt i Safari) – visa det tekniska namnet så de går att skilja åt
+          const twin = list.some(o => o !== v && o.name === v.name);
+          const sub = qualityName(v) + (twin ? ' · ' + v.voiceURI : '');
+          return choice(v.name, sub, isChosen(v), select(v.voiceURI), () => tryVoice(v));
+        })
       );
     }
 
@@ -1319,10 +1336,35 @@
       el('section', { class: 'panel' }, [
         el('h2', { text: '🗣️ Uppläsarens röst' }),
         el('p', { class: 'muted small', text:
-          'Röster märkta Naturlig eller Förbättrad låter minst robotaktigt. Fler röster: på Mac under ' +
-          'Systeminställningar → Hjälpmedel → Uppläst innehåll → Hantera röster → Svenska. ' +
-          'I Microsoft Edge finns de naturliga rösterna Sofie och Mattias. Ladda om sidan efter nedladdning.' }),
+          'Röster märkta Naturlig eller Förbättrad låter minst robotaktigt. ' +
+          'Saknas en bra röst? Se hur du laddar ner fler här nedanför.' }),
         voiceList
+      ]),
+      el('section', { class: 'panel' }, [
+        el('h2', { text: '⬇️ Ladda ner fler röster' }),
+        el('p', { class: 'muted small', text:
+          'Rösterna kommer från datorn eller webbläsaren. Efter nedladdningen: stäng webbläsaren helt, ' +
+          'öppna Teachy igen och välj den nya rösten här ovanför.' }),
+        howTo('🍎 Mac / MacBook', [
+          'Klicka på äpplet uppe till vänster → Systeminställningar.',
+          'Välj Hjälpmedel → Uppläst innehåll.',
+          'Tryck på ⓘ bredvid Systemröst (på äldre macOS: Systemröst → Anpassa…).',
+          'Välj Svenska i listan.',
+          'Ladda ner Alva, Klara eller Oskar – välj gärna versionen Premium eller Förbättrad.',
+          'Safari visar bara den enkla standardrösten för webbsidor. Använd Chrome eller Microsoft Edge för att få de bättre rösterna.'
+        ]),
+        howTo('🪟 Windows-dator', [
+          'Öppna Start → Inställningar.',
+          'Välj Tid och språk → Tal.',
+          'Tryck på Lägg till röster vid Hantera röster.',
+          'Sök efter Svenska, markera det och tryck Lägg till.',
+          'Vänta tills nedladdningen är klar och starta sedan om datorn.'
+        ]),
+        howTo('🌐 Enklast: Microsoft Edge', [
+          'Öppna Teachy i webbläsaren Microsoft Edge (finns redan på Windows och kan laddas ner till Mac).',
+          'Välj Microsoft Sofie eller Mattias – Online (Natural) i listan här ovanför.',
+          'Dessa röster låter mest naturligt men kräver internet.'
+        ])
       ]),
       el('section', { class: 'panel' }, [
         el('h2', { text: '🐢 Hur fort läser rösten?' }),
