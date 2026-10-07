@@ -83,24 +83,54 @@
 
   if (canSpeak) {
     loadVoices();
-    speechSynthesis.onvoiceschanged = loadVoices;
+    speechSynthesis.addEventListener('voiceschanged', loadVoices);
   }
 
-  // Bästa rösten för ett språk: exakt match (en-GB) före samma språk (en-US)
+  // Bästa rösten för ett språk: exakt match (en-GB) före samma språk (en-US),
+  // och naturliga röster (Premium/Enhanced/Natural) före de enkla standardrösterna
+  function voiceQuality(v) {
+    const name = v.name.toLowerCase();
+    if (/natural|neural|premium/.test(name)) return 3;
+    if (/enhanced|förbättrad|siri/.test(name)) return 2;
+    if (v.localService === false) return 1; // nätröster låter oftast bättre
+    return 0;
+  }
+
   function voiceFor(lang) {
     const norm = v => v.lang.replace('_', '-').toLowerCase();
-    return voices.find(v => norm(v) === lang.toLowerCase()) ||
-      voices.find(v => norm(v).startsWith(lang.slice(0, 2).toLowerCase())) || null;
+    const best = list => list.sort((a, b) => voiceQuality(b) - voiceQuality(a))[0] || null;
+    return best(voices.filter(v => norm(v) === lang.toLowerCase())) ||
+      best(voices.filter(v => norm(v).startsWith(lang.slice(0, 2).toLowerCase())));
   }
+
+  // Alla svenska röster, bästa först – för inställningssidan
+  function swedishVoices() {
+    return voices
+      .filter(v => v.lang.toLowerCase().startsWith('sv'))
+      .sort((a, b) => voiceQuality(b) - voiceQuality(a) || a.name.localeCompare(b.name, 'sv'));
+  }
+
+  // Svensk röst vald i inställningarna, annars den bästa som finns
+  function swedishVoice() {
+    const chosen = store.get('voice', null);
+    return voices.find(v => v.voiceURI === chosen) || voiceFor('sv-SE');
+  }
+
+  // Uppläsningstakt vald i inställningarna
+  const RATES = [
+    { id: 0.7, name: 'Långsamt' },
+    { id: 0.8, name: 'Lagom' },
+    { id: 0.95, name: 'Snabbt' }
+  ];
 
   function speak(text, lang) {
     if (!canSpeak || isMuted()) return;
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = lang || 'sv-SE';
-    const voice = voiceFor(u.lang);
+    const voice = u.lang.toLowerCase().startsWith('sv') ? swedishVoice() : voiceFor(u.lang);
     if (voice) u.voice = voice;
-    u.rate = 0.8;
+    u.rate = store.get('rate', 0.8);
     speechSynthesis.speak(u);
   }
 
@@ -1034,6 +1064,7 @@
       ]),
       el('div', { class: 'profile-bar-actions' }, [
         el('a', { class: 'btn btn-small', href: '#/framsteg', text: '📊 Framsteg' }),
+        el('a', { class: 'btn btn-small', href: '#/installningar', text: '⚙️', title: 'Inställningar', 'aria-label': 'Inställningar' }),
         soundToggle()
       ])
     ]);
@@ -1194,6 +1225,112 @@
     ]));
   }
 
+  // ---------- Inställningar ----------
+
+  function renderSettings(app) {
+    const voiceList = el('div', { class: 'choice-list' });
+    const rateList = el('div', { class: 'choice-list choice-row' });
+    const sample = 'Hej! Så här låter jag när jag läser upp.';
+
+    // Ett val i en lista: markeras när det är valt, med en knapp för att provlyssna
+    function choice(label, sub, selected, onSelect, onTry) {
+      return el('div', { class: 'choice' + (selected ? ' selected' : '') }, [
+        el('button', {
+          class: 'choice-pick', type: 'button', 'aria-pressed': String(selected), onclick: onSelect
+        }, [
+          el('span', { class: 'choice-mark', text: selected ? '●' : '○' }),
+          el('span', { class: 'choice-label' }, [
+            el('strong', { text: label }),
+            sub ? el('span', { class: 'muted small', text: sub }) : null
+          ])
+        ]),
+        onTry ? el('button', { class: 'btn btn-small', type: 'button', text: '▶ Prova', onclick: onTry }) : null
+      ]);
+    }
+
+    function tryVoice(voice) {
+      if (!canSpeak) return;
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(sample);
+      u.lang = 'sv-SE';
+      if (voice) u.voice = voice;
+      u.rate = store.get('rate', 0.8);
+      speechSynthesis.speak(u);
+    }
+
+    function qualityName(v) {
+      return ['Standard', 'Nätröst', 'Förbättrad', 'Naturlig'][voiceQuality(v)];
+    }
+
+    function drawVoices() {
+      const list = swedishVoices();
+      const chosen = store.get('voice', null);
+      const isChosen = v => v.voiceURI === chosen;
+      const auto = !list.some(isChosen);
+      const select = uri => () => {
+        if (uri) store.set('voice', uri);
+        else store.remove('voice');
+        drawVoices();
+        speak(sample);
+      };
+
+      if (!canSpeak) {
+        voiceList.replaceChildren(el('p', { class: 'muted', text: 'Den här webbläsaren kan inte läsa upp text.' }));
+        return;
+      }
+      if (!list.length) {
+        voiceList.replaceChildren(el('p', { class: 'muted', text: 'Hittar inga svenska röster ännu.' }));
+        return;
+      }
+      voiceList.replaceChildren(
+        choice('Automatisk', 'Bästa rösten just nu: ' + (voiceFor('sv-SE') || {}).name, auto, select(null),
+          () => tryVoice(voiceFor('sv-SE'))),
+        ...list.map(v => choice(v.name, qualityName(v), isChosen(v), select(v.voiceURI), () => tryVoice(v)))
+      );
+    }
+
+    function drawRates() {
+      const current = store.get('rate', 0.8);
+      rateList.replaceChildren(...RATES.map(r => choice(r.name, null, r.id === current, () => {
+        store.set('rate', r.id);
+        drawRates();
+        speak(sample);
+      })));
+    }
+
+    drawVoices();
+    drawRates();
+
+    // Rösterna laddas ibland in en stund efter att sidan öppnats
+    if (canSpeak) {
+      speechSynthesis.addEventListener('voiceschanged', drawVoices);
+      cleanup = () => speechSynthesis.removeEventListener('voiceschanged', drawVoices);
+    }
+
+    app.append(el('div', { class: 'screen' }, [
+      el('header', { class: 'game-bar' }, [
+        el('a', { class: 'btn btn-small', href: '#/', text: '← Hem' }),
+        soundToggle()
+      ]),
+      el('header', { class: 'hub-head' }, [
+        el('div', { class: 'intro-icon', text: '⚙️' }),
+        el('h1', { text: 'Inställningar' })
+      ]),
+      el('section', { class: 'panel' }, [
+        el('h2', { text: '🗣️ Uppläsarens röst' }),
+        el('p', { class: 'muted small', text:
+          'Röster märkta Naturlig eller Förbättrad låter minst robotaktigt. Fler röster: på Mac under ' +
+          'Systeminställningar → Hjälpmedel → Uppläst innehåll → Hantera röster → Svenska. ' +
+          'I Microsoft Edge finns de naturliga rösterna Sofie och Mattias. Ladda om sidan efter nedladdning.' }),
+        voiceList
+      ]),
+      el('section', { class: 'panel' }, [
+        el('h2', { text: '🐢 Hur fort läser rösten?' }),
+        rateList
+      ])
+    ]));
+  }
+
   // ---------- Navigering ----------
 
   function go(hash) {
@@ -1218,6 +1355,11 @@
 
     if (id === 'profiler' || !profile) {
       renderProfiles(app);
+      return;
+    }
+    if (id === 'installningar') {
+      document.title = 'Inställningar – Teachy';
+      renderSettings(app);
       return;
     }
     if (id === 'framsteg') {

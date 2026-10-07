@@ -990,3 +990,39 @@ body.muted .btn-listen { display: none; }
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   .confetti { display: none; }
 }
+
+/* ---------- Inställningar ---------- */
+
+.panel h2 { margin: 0 0 6px; font-size: 22px; }
+
+.choice-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.choice-row { flex-direction: row; flex-wrap: wrap; }
+.choice-row .choice { flex: 1 1 120px; }
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 4px;
+  border: 2px solid var(--line);
+  border-radius: 16px;
+  background: var(--card);
+}
+.choice.selected { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, var(--card)); }
+
+.choice-pick {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.choice-mark { font-size: 20px; color: var(--primary); }
+.choice-label { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
