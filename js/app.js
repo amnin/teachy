@@ -16,8 +16,16 @@
     { id: 1, name: 'Årskurs 1', sub: 'Första klass' }
   ];
 
+  // Ordning för ämnena på startsidan
+  const SUBJECTS = ['Svenska', 'Matematik', 'Natur och samhälle', 'NO', 'SO', 'Engelska', 'Teknik'];
+
   const games = [];
   let cleanup = null;
+
+  // grade kan vara ett tal eller en lista, t.ex. [0, 1] för spel i båda årskurserna
+  function inGrade(game, grade) {
+    return [].concat(game.grade).includes(grade);
+  }
 
   function registerGame(game) {
     games.push(game);
@@ -55,26 +63,42 @@
     return shuffle(list).slice(0, n);
   }
 
-  // ---------- Tal (svensk röst) ----------
+  // Heltal från min till max (båda inräknade)
+  function rand(min, max) {
+    return min + Math.floor(Math.random() * (max - min + 1));
+  }
+
+  function pick(list) {
+    return list[Math.floor(Math.random() * list.length)];
+  }
+
+  // ---------- Tal (svensk röst, eller annat språk t.ex. 'en-GB') ----------
 
   const canSpeak = 'speechSynthesis' in window;
-  let voice = null;
+  let voices = [];
 
-  function loadVoice() {
-    const voices = speechSynthesis.getVoices();
-    voice = voices.find(v => /^sv/i.test(v.lang)) || null;
+  function loadVoices() {
+    voices = speechSynthesis.getVoices();
   }
 
   if (canSpeak) {
-    loadVoice();
-    speechSynthesis.onvoiceschanged = loadVoice;
+    loadVoices();
+    speechSynthesis.onvoiceschanged = loadVoices;
   }
 
-  function speak(text) {
+  // Bästa rösten för ett språk: exakt match (en-GB) före samma språk (en-US)
+  function voiceFor(lang) {
+    const norm = v => v.lang.replace('_', '-').toLowerCase();
+    return voices.find(v => norm(v) === lang.toLowerCase()) ||
+      voices.find(v => norm(v).startsWith(lang.slice(0, 2).toLowerCase())) || null;
+  }
+
+  function speak(text, lang) {
     if (!canSpeak || isMuted()) return;
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'sv-SE';
+    u.lang = lang || 'sv-SE';
+    const voice = voiceFor(u.lang);
     if (voice) u.voice = voice;
     u.rate = 0.8;
     speechSynthesis.speak(u);
@@ -491,7 +515,7 @@
       hint ? el('p', { class: 'hint', text: hint }) : null,
       el('div', { class: 'quiz-zone' }, [
         promptBox,
-        el('button', { class: 'btn btn-listen', type: 'button', text: '🔊 Lyssna', onclick: () => speak(view.say) })
+        el('button', { class: 'btn btn-listen', type: 'button', text: '🔊 Lyssna', onclick: () => speak(view.say, view.lang) })
       ]),
       choicesBox
     ]));
@@ -514,7 +538,7 @@
       choicesBox.replaceChildren(...tiles);
 
       if (view.onShow) view.onShow();
-      timer.later(() => speak(view.say), 400);
+      timer.later(() => speak(view.say, view.lang), 400);
     }
 
     function choose(tile, choice) {
@@ -527,7 +551,7 @@
         progress.recordAnswer(gameId, view.item, mistakes === 0);
         tracker.mark(index, mistakes === 0);
         if (view.onRight) view.onRight();
-        timer.later(() => speak(view.praise || praise()), 350);
+        timer.later(() => speak(view.praise || praise(), view.praise ? view.lang : null), 350);
         timer.later(next, 2400);
       } else {
         mistakes++;
@@ -535,7 +559,7 @@
         replayClass(tile, 'wrong');
         tile.disabled = true;
         if (view.onWrong) view.onWrong();
-        timer.later(() => speak(view.say), 350);
+        timer.later(() => speak(view.retry || view.say, view.lang), 350);
 
         // Efter två fel: visa var rätt svar är
         if (mistakes >= 2) tiles[view.choices.findIndex(c => c.correct)].classList.add('nudge');
@@ -553,6 +577,311 @@
     }
 
     show();
+  }
+
+  // Svarsknappar för tal: rätt svar + troliga felsvar (extra) + närliggande tal,
+  // i storleksordning. Ger färdiga choices till quizRound.
+  function numberOptions(answer, count, min, max, extra) {
+    const ok = n => Number.isInteger(n) && n >= min && n <= max && n !== answer;
+    const picked = [];
+    for (const n of shuffle((extra || []).filter(ok))) {
+      if (!picked.includes(n) && picked.length < count - 1) picked.push(n);
+    }
+    for (let d = 1; picked.length < count - 1 && d <= max - min; d++) {
+      for (const n of shuffle([answer - d, answer + d])) {
+        if (ok(n) && !picked.includes(n) && picked.length < count - 1) picked.push(n);
+      }
+    }
+    return [answer, ...picked].sort((a, b) => a - b).map(n => ({
+      label: String(n),
+      correct: n === answer,
+      content: el('span', { class: 'tile-up', text: n })
+    }));
+  }
+
+  // Tom "?"-ruta i en uppgift. fill(text) visar svaret när det är rätt.
+  function slot(text) {
+    const node = el('span', { class: 'pattern-slot', text: text || '?' });
+    node.fill = value => {
+      node.textContent = value;
+      node.classList.add('right');
+    };
+    return node;
+  }
+
+  // Bild till ett kort: emoji, eller en SVG-sträng (svg) för egna ritningar
+  function picture(item, cls) {
+    const node = el('span', { class: cls || 'picture' });
+    if (item.svg) node.innerHTML = item.svg;
+    else node.textContent = item.emoji;
+    return node;
+  }
+
+  // En runda där bilder dras till rätt grupp.
+  // level = { question, bins: [{ label, icon | svg, items: [{ name, emoji | svg }] }] }
+  function sortRound(root, { gameId, level, timer, roundLength, onReplay, onLevels }) {
+    const pool = level.bins.flatMap(bin => bin.items.map(item => ({ item, bin })));
+    const tasks = sample(pool, Math.min(roundLength, pool.length));
+    const tracker = roundTracker(tasks.length);
+    let index = 0;
+    let mistakes = 0;
+    let locked = false;
+    let current = null;
+
+    const card = el('div', { class: 'pic-card', role: 'img' });
+    const caption = el('div', { class: 'sort-caption', 'aria-live': 'polite' });
+    const bins = level.bins.map(bin => {
+      const node = el('button', {
+        class: 'bin', type: 'button', 'aria-label': bin.label,
+        onclick: () => choose(node)
+      }, [
+        picture({ emoji: bin.icon, svg: bin.svg }, 'bin-icon'),
+        el('span', { class: 'bin-label', text: bin.label })
+      ]);
+      node.dataset.label = bin.label;
+      return node;
+    });
+
+    root.replaceChildren(el('div', { class: 'screen sortera' }, [
+      tracker.bar,
+      el('p', { class: 'hint', text: level.question }),
+      el('div', { class: 'pic-zone' }, [card, caption,
+        el('button', { class: 'btn btn-listen', type: 'button', text: '🔊 Lyssna', onclick: () => speak(current.item.name) })
+      ]),
+      el('div', { class: 'bins' }, bins)
+    ]));
+
+    // Frågan läses först, sedan den första bildens namn
+    timer.later(() => speak(level.question), 300);
+
+    const dragger = draggable(card, {
+      targets: () => bins,
+      enabled: () => !locked,
+      onDrop: bin => choose(bin),
+      onTap: () => speak(current.item.name)
+    });
+
+    function show(first) {
+      current = tasks[index];
+      mistakes = 0;
+      locked = false;
+      tracker.current(index);
+      card.replaceChildren(picture(current.item, 'pic-card-picture'));
+      card.setAttribute('aria-label', current.item.name);
+      caption.textContent = '';
+      bins.forEach(b => b.classList.remove('right', 'nudge'));
+      dragger.reset();
+      timer.later(() => speak(current.item.name), first ? 2600 : 400);
+    }
+
+    function choose(binNode) {
+      if (locked) return;
+      const label = binNode.dataset.label;
+
+      if (label === current.bin.label) {
+        locked = true;
+        binNode.classList.add('right');
+        dragger.flyInto(binNode);
+        chime('right');
+        progress.recordAnswer(gameId, label, mistakes === 0);
+        tracker.mark(index, mistakes === 0);
+        caption.textContent = current.item.name + ' – ' + label.toLowerCase();
+        timer.later(() => speak(current.item.name + '. ' + label), 350);
+        timer.later(next, 2200);
+      } else {
+        mistakes++;
+        chime('wrong');
+        replayClass(binNode, 'wrong');
+        dragger.snapBack();
+        timer.later(() => speak(current.item.name), 350);
+        if (mistakes >= 2) {
+          const right = bins.find(b => b.dataset.label === current.bin.label);
+          if (right) right.classList.add('nudge');
+        }
+      }
+    }
+
+    function next() {
+      index++;
+      if (index < tasks.length) {
+        show(false);
+        return;
+      }
+      timer.clear();
+      resultScreen(root, { gameId, level, score: tracker.stars, total: tasks.length, onReplay, onLevels });
+    }
+
+    show(true);
+  }
+
+  // En runda där man trycker i rätt ordning: bokstäverna i ett ord, stegen i en livscykel ...
+  // render(task) ska returnera:
+  //   steps  – [{ label, emoji | svg | text, caption }] i rätt ordning (samma label = utbytbara)
+  //   say, item – som i quizRound
+  //   prompt, retry, praise, lang, arrows (pilar mellan rutorna) – valfria
+  function orderRound(root, { gameId, level, tasks, hint, timer, render, onReplay, onLevels }) {
+    const tracker = roundTracker(tasks.length);
+    const promptBox = el('div', { class: 'quiz-prompt' });
+    const slotsBox = el('div', { class: 'order-slots' });
+    const tilesBox = el('div', { class: 'letters' });
+    let index = 0;
+    let mistakes = 0;
+    let pos = 0;
+    let locked = false;
+    let view = null;
+    let tiles = [];
+    let slots = [];
+
+    root.replaceChildren(el('div', { class: 'screen' }, [
+      tracker.bar,
+      hint ? el('p', { class: 'hint', text: hint }) : null,
+      el('div', { class: 'quiz-zone' }, [
+        promptBox,
+        slotsBox,
+        el('button', { class: 'btn btn-listen', type: 'button', text: '🔊 Lyssna', onclick: () => speak(view.say, view.lang) })
+      ]),
+      tilesBox
+    ]));
+
+    function stepNode(step) {
+      return el('span', { class: 'order-content' }, [
+        step.text != null ? el('span', { class: 'order-text', text: step.text }) : picture(step, 'order-picture'),
+        step.caption ? el('span', { class: 'order-caption', text: step.caption }) : null
+      ]);
+    }
+
+    function show() {
+      mistakes = 0;
+      pos = 0;
+      locked = false;
+      view = render(tasks[index]);
+      tracker.current(index);
+
+      promptBox.replaceChildren(...(view.prompt ? [view.prompt] : []));
+      promptBox.hidden = !view.prompt;
+      replayClass(promptBox, 'pop-in');
+
+      slots = view.steps.map(() => el('span', { class: 'order-slot' }));
+      slotsBox.className = 'order-slots' + (view.arrows ? ' with-arrows' : '');
+      slotsBox.replaceChildren(...slots.flatMap((slot, i) =>
+        i && view.arrows ? [el('span', { class: 'order-arrow', text: '→' }), slot] : [slot]));
+
+      tiles = shuffle(view.steps).map(step => {
+        const tile = el('button', {
+          class: 'tile order-tile', type: 'button', 'aria-label': step.label,
+          onclick: () => choose(tile, step)
+        }, [stepNode(step)]);
+        tile.dataset.label = step.label;
+        return tile;
+      });
+      tilesBox.replaceChildren(...tiles);
+
+      timer.later(() => speak(view.say, view.lang), 400);
+    }
+
+    function choose(tile, step) {
+      if (locked || tile.disabled) return;
+      const expected = view.steps[pos];
+
+      if (step.label === expected.label) {
+        tile.disabled = true;
+        tile.classList.add('used');
+        tiles.forEach(t => t.classList.remove('nudge'));
+        slots[pos].replaceChildren(stepNode(step));
+        slots[pos].classList.add('filled');
+        pos++;
+        if (pos < view.steps.length) return;
+
+        locked = true;
+        slots.forEach(s => s.classList.add('right'));
+        chime('right');
+        progress.recordAnswer(gameId, view.item, mistakes === 0);
+        tracker.mark(index, mistakes === 0);
+        timer.later(() => speak(view.praise || praise(), view.praise ? view.lang : null), 350);
+        timer.later(next, 2600);
+      } else {
+        mistakes++;
+        chime('wrong');
+        replayClass(tile, 'wrong');
+        timer.later(() => speak(view.retry || view.say, view.lang), 350);
+        if (mistakes >= 2) {
+          const right = tiles.find(t => !t.disabled && t.dataset.label === expected.label);
+          if (right) right.classList.add('nudge');
+        }
+      }
+    }
+
+    function next() {
+      index++;
+      if (index < tasks.length) {
+        show();
+        return;
+      }
+      timer.clear();
+      resultScreen(root, { gameId, level, score: tracker.stars, total: tasks.length, onReplay, onLevels });
+    }
+
+    show();
+  }
+
+  // Registrerar ett vanligt spel: nivåval + en runda av vald typ.
+  // def = { id, title, grade, subject, icon, color, description, intro, levels,
+  //         makeTasks(level, n), render(task, level, timer), hint, roundLength,
+  //         report: { title, keys } | renderProgress }
+  function defineGame(def, round) {
+    const report = def.report;
+    registerGame({
+      id: def.id,
+      title: def.title,
+      grade: def.grade,
+      subject: def.subject,
+      icon: def.icon,
+      color: def.color,
+      description: def.description,
+      renderProgress: def.renderProgress || (report
+        ? p => accuracyReport(typeof report.keys === 'function' ? report.keys() : report.keys, p.items, report.title)
+        : null),
+      mount(root) {
+        const timer = timers();
+
+        function showLevels() {
+          timer.clear();
+          levelScreen(root, { icon: def.icon, title: def.title, text: def.intro, levels: def.levels, onPick: startRound });
+        }
+
+        function startRound(level) {
+          timer.clear();
+          const roundLength = def.roundLength || 10;
+          round(root, {
+            gameId: def.id,
+            level,
+            timer,
+            roundLength,
+            tasks: def.makeTasks ? def.makeTasks(level, roundLength) : null,
+            hint: typeof def.hint === 'function' ? def.hint(level) : def.hint,
+            render: def.render ? task => def.render(task, level, timer) : null,
+            onReplay: () => startRound(level),
+            onLevels: showLevels
+          });
+        }
+
+        showLevels();
+        return timer.clear;
+      }
+    });
+  }
+
+  function quizGame(def) {
+    defineGame(def, quizRound);
+  }
+
+  function orderGame(def) {
+    defineGame(def, orderRound);
+  }
+
+  function sortGame(def) {
+    const labels = () => [...new Set(def.levels.flatMap(l => l.bins.map(b => b.label)))];
+    defineGame(Object.assign({ report: { title: 'Grupper', keys: labels } }, def), sortRound);
   }
 
   // Reglage av/på, t.ex. för en inställning på nivåsidan
@@ -739,7 +1068,7 @@
       ])
     )));
 
-    const gradeGames = games.filter(g => g.grade === grade);
+    const gradeGames = games.filter(g => inGrade(g, grade));
     if (!gradeGames.length) {
       app.append(el('div', { class: 'empty-grade' }, [
         el('div', { class: 'intro-icon', text: '🚧' }),
@@ -748,7 +1077,9 @@
       return;
     }
 
-    const subjects = [...new Set(gradeGames.map(g => g.subject))];
+    // Ämnen i fast ordning; okända ämnen hamnar sist
+    const rank = subject => (SUBJECTS.includes(subject) ? SUBJECTS.indexOf(subject) : SUBJECTS.length);
+    const subjects = [...new Set(gradeGames.map(g => g.subject))].sort((a, b) => rank(a) - rank(b));
     for (const subject of subjects) {
       const cards = gradeGames.filter(g => g.subject === subject).map(g => {
         const stars = progress.game(g.id, profile.id).stars;
@@ -852,7 +1183,7 @@
       ]),
       // Spelen grupperade per årskurs
       ...GRADES.flatMap(grade => {
-        const own = games.filter(g => g.grade === grade.id);
+        const own = games.filter(g => [].concat(g.grade)[0] === grade.id);
         if (!own.length) return [];
         return [
           el('h2', { class: 'grade-heading', text: grade.name }),
@@ -911,9 +1242,10 @@
   }
 
   const api = {
-    el, shuffle, sample, speak, chime, store, confetti, profiles, progress, formatDate,
+    el, shuffle, sample, rand, pick, speak, chime, store, confetti, profiles, progress, formatDate,
     timers, replayClass, topBar, levelScreen, roundTracker, resultScreen, isMuted, setMuted,
-    toggle, accuracyReport, praise, orList, draggable, quizRound
+    toggle, accuracyReport, praise, orList, draggable, quizRound,
+    picture, sortRound, orderRound, quizGame, sortGame, orderGame, inGrade, numberOptions, slot
   };
 
   window.Teachy = Object.assign({ registerGame, start, data: {} }, api);

@@ -83,12 +83,42 @@ Allt sparas i webbläsarens `localStorage`, alltså per enhet och webbläsare.
   går eller flyger, frukt eller grönsak, årstider.
 
 Spelen utgår från förskoleklassens centrala innehåll i Lgr22.
-Orden med bilder som svenskaspelen använder finns i `data/words.js`.
+**Räkna** finns även i årskurs 1.
+
+## Spel – Årskurs 1
+
+Utgår från det centrala innehållet för åk 1–3 i Lgr22 (början av perioden) och
+kriterierna för läsförståelse i slutet av åk 1. Filerna ligger i `games/ak1/`.
+
+- **Svenska:** Läs ordet, Läs meningen, Bygg ordet, Lyssna på sagan, ABC,
+  Punkt och stor bokstav
+- **Matematik:** Tiokamrater, Tiotal och ental, Gömt tal, Talmönster,
+  Dubbelt och hälften, Halvor och fjärdedelar, Klockan, Former, Robotvägen,
+  Läs diagrammet (+ Räkna)
+- **NO:** Flyter eller sjunker?, Is vatten ånga, Livscykeln, Vem äter vem?,
+  Kroppen och sinnena
+- **SO:** Trafikvett, Vem hjälper till?
+- **Engelska:** English words (färger, siffror, djur, mat – engelsk uppläsning)
+- **Teknik:** Datorns delar
+
+Gemensam data: ord med bilder i `data/words.js`, bilder till lägesord i `data/scenes.js`.
 
 ## Byggstenar för nya spel
 
-- `T.quizRound` – en hel runda flervalsfrågor. Enklast för nya spel, se
-  `games/rimma/rimma.js` (≈100 rader).
-- `T.draggable` – dra ett kort till mål, se `games/sortera/sortera.js`.
-- `T.levelScreen`, `T.roundTracker`, `T.resultScreen`, `T.timers`, `T.toggle`,
-  `T.accuracyReport`, `T.praise`, `T.orList`.
+De flesta spel är bara data + en liten `render`-funktion. Välj typ:
+
+- `T.quizGame(def)` – flervalsfrågor. Exempel: `games/ak1/tiotal.js` (≈50 rader).
+- `T.sortGame(def)` – dra bilder till rätt grupp. Bara data, se `games/ak1/flyter.js`.
+- `T.orderGame(def)` – tryck i rätt ordning. Se `games/ak1/livscykel.js`.
+- Eget gränssnitt: `T.registerGame` + `T.levelScreen`, `T.roundTracker`,
+  `T.resultScreen`, `T.timers`. Se `games/ak1/robot.js`.
+
+`def` innehåller `id, title, grade, subject, icon, color, description, intro,
+levels, makeTasks(level, n), render(task, level), hint, report: { title, keys }`.
+`render` returnerar `{ prompt, say, item, choices, praise, retry, lang, onRight }`.
+
+Övriga hjälpare: `T.numberOptions` (svarsknappar för tal), `T.slot` (?-ruta),
+`T.picture`, `T.draggable`, `T.toggle`, `T.accuracyReport`, `T.praise`,
+`T.orList`, `T.rand`, `T.pick`, `T.speak(text, lang)`.
+
+Ämnenas ordning på startsidan styrs av `SUBJECTS` i `js/app.js`.
