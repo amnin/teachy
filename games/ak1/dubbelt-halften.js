@@ -1,5 +1,5 @@
 /*
- * Dubbelt och hälften – med bilder att räkna på.
+ * Dubbelt och hälften – med bilder att räkna på som hjälp.
  */
 (function () {
   'use strict';
@@ -45,19 +45,21 @@
     render: (task, level) => {
       const [emoji, plural] = task.thing;
       const gap = T.slot();
+      const things = level.noPictures ? null : el('div', { class: 'double-things' }, [el('span', { text: emoji.repeat(task.given) })]);
       const what = level.noPictures ? '' : ' ' + plural;
       const question = task.kind === 'dubbelt'
         ? 'Vad är dubbelt så många som ' + task.given + what + '?'
         : 'Vad är hälften av ' + task.given + what + '?';
       return {
         prompt: el('div', { class: 'double-task' }, [
-          level.noPictures ? null : el('div', { class: 'double-things' }, [el('span', { text: emoji.repeat(task.given) })]),
+          things,
           el('div', { class: 'read-sentence' }, [
             el('span', { text: task.kind === 'dubbelt' ? 'Dubbelt så många som ' + task.given + ' är ' : 'Hälften av ' + task.given + ' är ' }),
             gap
           ])
         ]),
         say: question,
+        help: things,
         praise: task.kind === 'dubbelt'
           ? task.given + ' och ' + task.given + ' blir ' + task.answer + '!'
           : task.answer + ' och ' + task.answer + ' blir ' + task.given + '!',

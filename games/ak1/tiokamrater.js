@@ -75,15 +75,17 @@
           onRight: () => gap.fill(task.answer)
         };
       }
+      const ten = frame(task.total, task.shown);
       return {
         prompt: el('div', { class: 'frame-task' }, [
-          frame(task.total, task.shown),
+          ten,
           el('div', { class: 'math-equation small' }, [
             el('span', { text: task.shown }), el('span', { class: 'math-op', text: '+' }), gap,
             el('span', { class: 'math-op', text: '=' }), el('span', { text: task.total })
           ])
         ]),
         say: task.shown + ' plus hur många blir ' + task.total + '?',
+        help: ten,
         praise: task.shown + ' och ' + task.answer + ' är ' + (task.total === 10 ? 'tiokamrater!' : 'femkamrater!'),
         item: task.shown + '+' + task.answer,
         choiceClass: 'num-tile',

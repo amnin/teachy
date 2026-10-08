@@ -154,74 +154,121 @@
     { id: 0.95, name: 'Snabbt' }
   ];
 
+  // "|" i en text betyder en paus i uppläsningen, t.ex. mellan svarsalternativen,
+  // och "||" en längre paus, t.ex. mellan frågan och alternativen (se orList)
+  const PAUSE = '|';
+  const LONG_PAUSE = '||';
+  const PAUSE_MS = 1000;
+  const LONG_PAUSE_MS = 2000;
+
   function speak(text, lang) {
     if (isMuted()) return;
     lang = lang || 'sv-SE';
     sayWith(lang.toLowerCase().startsWith('sv') ? swedishVoice() : null, text, lang);
   }
 
-  // Läs upp med ett visst alternativ från swedishVoices() (null = bästa webbläsarrösten)
+  // Läs upp med ett visst alternativ från swedishVoices() (null = bästa webbläsarrösten).
+  // Texten läses en del i taget, med en paus vid varje "|" eller "||".
   function sayWith(option, text, lang) {
     stopSpeech();
-    if (option && option.mac) {
-      playMac(text, option.name, () => speakBrowser(text, lang, voiceFor(lang)));
-    } else {
-      speakBrowser(text, lang, option ? option.voice : voiceFor(lang));
+    const id = speechId;
+    // [text, pausen efter, text, pausen efter, …] → [{ text, pause }]
+    const pieces = String(text).split(/(\|+)/);
+    const parts = [];
+    for (let i = 0; i < pieces.length; i += 2) {
+      const pause = pieces[i + 1] && pieces[i + 1].length > 1 ? LONG_PAUSE_MS : PAUSE_MS;
+      if (pieces[i].trim()) parts.push({ text: pieces[i].trim(), pause });
     }
+    const voice = () => (option && !option.mac ? option.voice : voiceFor(lang));
+    // Hämta alla delar direkt, så att det inte blir extra väntan mellan dem
+    if (option && option.mac) {
+      try {
+        parts.forEach(part => macBuffer(part.text, option.name).catch(() => {}));
+      } catch (e) { /* inget ljud – playMac faller tillbaka på webbläsaren */ }
+    }
+
+    function say(i) {
+      if (id !== speechId || i >= parts.length) return;
+      const { text, pause } = parts[i];
+      const done = () => {
+        if (id === speechId) speechTimer = setTimeout(() => say(i + 1), pause);
+      };
+      if (option && option.mac) {
+        playMac(text, option.name, id, done, () => speakBrowser(text, lang, voice(), id, done));
+      } else {
+        speakBrowser(text, lang, voice(), id, done);
+      }
+    }
+    say(0);
   }
 
-  function speakBrowser(text, lang, voice) {
+  let speechId = 0;          // ökas vid varje ny uppläsning, så att svar som kommer för sent ignoreras
+  let speechSource = null;   // ljudet som spelas just nu
+  let speechUtterance = null; // sparas så att Safari inte slänger den innan onend
+  let speechTimer = null;    // pausen före nästa del
+  const macAudio = new Map(); // färdiga ljud, så att samma fras inte hämtas igen
+
+  function speakBrowser(text, lang, voice, id, done) {
     if (!canSpeak) return;
-    speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = lang;
     if (voice) u.voice = voice;
     u.rate = store.get('rate', 0.8);
+    u.onend = () => {
+      if (id === speechId) done();
+    };
+    speechUtterance = u;
     speechSynthesis.speak(u);
   }
 
-  let speechId = 0;        // ökas vid varje ny uppläsning, så att svar som kommer för sent ignoreras
-  let speechSource = null; // ljudet som spelas just nu
-  const macAudio = new Map(); // färdiga ljud, så att samma fras inte hämtas igen
-
-  function playMac(text, voice, fallback) {
-    const id = ++speechId;
+  function macBuffer(text, voice) {
     const key = new URLSearchParams({ text, voice, rate: store.get('rate', 0.8) }).toString();
-    let ctx;
-    try {
-      ctx = audioContext();
-    } catch (e) {
-      fallback();
-      return;
-    }
     if (!macAudio.has(key)) {
+      const ctx = audioContext();
       if (macAudio.size > 150) macAudio.delete(macAudio.keys().next().value);
-      macAudio.set(key, fetch('api/tts?' + key)
+      const buffer = fetch('api/tts?' + key)
         .then(r => {
           if (!r.ok) throw new Error('tts ' + r.status);
           return r.arrayBuffer();
         })
         // Callback-formen fungerar även i äldre Safari
-        .then(data => new Promise((resolve, reject) => ctx.decodeAudioData(data, resolve, reject))));
+        .then(data => new Promise((resolve, reject) => ctx.decodeAudioData(data, resolve, reject)));
+      buffer.catch(() => macAudio.delete(key));
+      macAudio.set(key, buffer);
     }
-    macAudio.get(key)
+    return macAudio.get(key);
+  }
+
+  function playMac(text, voice, id, done, fallback) {
+    let ctx, buffer;
+    try {
+      ctx = audioContext();
+      buffer = macBuffer(text, voice);
+    } catch (e) {
+      fallback();
+      return;
+    }
+    buffer
       .then(buffer => {
         if (id !== speechId) return;
         if (ctx.state !== 'running') ctx.resume();
         const source = ctx.createBufferSource();
         source.buffer = buffer;
         source.connect(ctx.destination);
+        source.onended = () => {
+          if (id === speechId) done();
+        };
         source.start();
         speechSource = source;
       })
       .catch(() => {
-        macAudio.delete(key);
         if (id === speechId) fallback();
       });
   }
 
   function stopSpeech() {
     speechId++;
+    clearTimeout(speechTimer);
     if (speechSource) {
       try { speechSource.stop(); } catch (e) { /* redan slut */ }
       speechSource = null;
@@ -350,12 +397,55 @@
       this.select(profile.id);
       return profile;
     },
+    // Ändra fält i en profil, t.ex. { birthday: { month: 2, day: 14 } }
+    update(id, fields) {
+      store.set('profiles', this.list().map(p => (p.id === id ? Object.assign({}, p, fields) : p)));
+    },
     remove(id) {
       store.set('profiles', this.list().filter(p => p.id !== id));
       store.remove('progress:' + id);
       if (store.get('currentProfile', null) === id) store.set('currentProfile', null);
     }
   };
+
+  // ---------- Födelsedag ----------
+
+  const MONTH_NAMES = ['januari', 'februari', 'mars', 'april', 'maj', 'juni',
+    'juli', 'augusti', 'september', 'oktober', 'november', 'december'];
+
+  // Välj födelsedag i två steg: först månad, sedan dag. Sparas i profilen
+  // som birthday: { month (0–11), day }, och sedan anropas onSave().
+  function birthdayPicker(profile, onSave) {
+    const box = el('div', { class: 'birthday-picker' });
+
+    function months() {
+      box.replaceChildren(
+        el('p', { class: 'birthday-ask', text: 'Vilken månad fyller du år?' }),
+        el('div', { class: 'birthday-grid' }, MONTH_NAMES.map((name, month) =>
+          el('button', { class: 'birthday-btn', type: 'button', text: name, onclick: () => days(month) })))
+      );
+    }
+
+    function days(month) {
+      // Ett skottår, så att 29 februari går att välja
+      const count = new Date(2024, month + 1, 0).getDate();
+      box.replaceChildren(
+        el('p', { class: 'birthday-ask', text: 'Vilken dag i ' + MONTH_NAMES[month] + '?' }),
+        el('div', { class: 'birthday-grid birthday-days' }, Array.from({ length: count }, (_, i) =>
+          el('button', {
+            class: 'birthday-btn', type: 'button', text: String(i + 1),
+            onclick: () => {
+              profiles.update(profile.id, { birthday: { month, day: i + 1 } });
+              onSave();
+            }
+          }))),
+        el('button', { class: 'btn btn-small', type: 'button', text: '← Byt månad', onclick: months })
+      );
+    }
+
+    months();
+    return box;
+  }
 
   // ---------- Framsteg (per profil och spel) ----------
   //
@@ -507,27 +597,54 @@
     };
   }
 
+  // Betyg A–F efter andel rätt: 50 % eller mindre är F, sedan ett steg per 10 %.
+  // F ska kännas som "vi övar lite till", aldrig som ett misslyckande.
+  const GRADE_STEPS = [
+    { grade: 'A', min: 0.9, icon: '🏆', title: name => 'Fantastiskt, ' + name + '!', say: name => 'Fantastiskt, ' + name + '! Du fick ett A!' },
+    { grade: 'B', min: 0.8, icon: '🥇', title: name => 'Jättebra jobbat, ' + name + '!', say: name => 'Jättebra jobbat, ' + name + '! Du fick ett B!' },
+    { grade: 'C', min: 0.7, icon: '🌟', title: name => 'Bra jobbat, ' + name + '!', say: name => 'Bra jobbat, ' + name + '! Du fick ett C!' },
+    { grade: 'D', min: 0.6, icon: '👍', title: name => 'Bra kämpat, ' + name + '!', say: name => 'Bra kämpat, ' + name + '! Du fick ett D!' },
+    { grade: 'E', min: 0.5, icon: '🙂', title: name => 'Du klarade det, ' + name + '!', say: name => 'Du klarade det, ' + name + '! Du fick ett E!' },
+    { grade: 'F', min: -1, icon: '🌱', title: name => 'Bra kämpat, ' + name + '!',
+      say: name => 'Bra kämpat, ' + name + '! Det här var svårt. Vi övar lite till, så går det bättre nästa gång!' }
+  ];
+  const GRADE_TEXT = {
+    A: 'Nästan allt rätt på första försöket!',
+    B: 'Du kan det här riktigt bra.',
+    C: 'Du är på god väg!',
+    D: 'Några till rundor, så sitter det!',
+    E: 'Öva lite till, så blir du ännu bättre.',
+    F: 'Det här är svårt – och det är helt okej! Varje gång du övar växer du lite. 💪'
+  };
+
+  function gradeFor(score, total) {
+    const share = total ? score / total : 0;
+    // "mer än" min, så att exakt 50 % blir F och exakt 90 % blir B
+    return GRADE_STEPS.find(g => share > g.min + 1e-9);
+  }
+
   // Sparar rundan, firar och erbjuder att spela igen
   function resultScreen(root, { gameId, level, score, total, onReplay, onLevels }) {
-    progress.recordRound(gameId, { level: level.name, score, total, stars: score });
+    const step = gradeFor(score, total);
+    progress.recordRound(gameId, { level: level.name, score, total, stars: score, grade: step.grade });
     confetti();
 
     const name = profiles.current().name;
-    const good = score >= total * 0.7;
-    const message = score === total ? 'Alla rätt på första försöket, ' + name + '!'
-      : good ? 'Jättebra jobbat, ' + name + '!'
-      : 'Bra kämpat, ' + name + '! Öva lite till så blir du ännu bättre.';
-    speak((good ? 'Jättebra jobbat, ' : 'Bra kämpat, ') + name + '!');
+    speak(step.say(name));
 
     root.replaceChildren(el('div', { class: 'screen' }, [
       topBar(),
       el('div', { class: 'result' }, [
-        el('div', { class: 'result-icon', text: '🏆' }),
-        el('h1', { text: message }),
+        el('div', { class: 'result-icon', text: step.icon }),
+        el('h1', { text: step.title(name) }),
+        el('div', { class: 'result-grade grade-' + step.grade }, [
+          el('span', { class: 'result-grade-letter', text: step.grade }),
+          el('span', { class: 'result-grade-text', text: GRADE_TEXT[step.grade] })
+        ]),
         el('p', { class: 'result-stars', text: '⭐'.repeat(score) + '☆'.repeat(total - score) }),
         el('p', { text: 'Du fick ' + score + ' av ' + total + ' stjärnor.' }),
         el('div', { class: 'result-actions' }, [
-          el('button', { class: 'btn btn-big', type: 'button', text: 'Spela igen', onclick: onReplay }),
+          el('button', { class: 'btn btn-big', type: 'button', text: step.grade === 'F' ? 'Försök igen' : 'Spela igen', onclick: onReplay }),
           el('button', { class: 'btn btn-big btn-ghost', type: 'button', text: 'Byt nivå', onclick: onLevels })
         ])
       ])
@@ -542,7 +659,9 @@
 
   // "a, b eller c"
   function orList(words) {
-    return words.length < 2 ? words.join('') : words.slice(0, -1).join(', ') + ' eller ' + words[words.length - 1];
+    // Pauser före alternativen och mellan dem, så att de hinns uppfattas
+    return LONG_PAUSE + ' ' + (words.length < 2 ? words.join('')
+      : words.slice(0, -1).join(', ' + PAUSE + ' ') + ', ' + PAUSE + ' eller ' + words[words.length - 1]);
   }
 
   // Gör ett kort dragbart till ett antal mål (fungerar med mus, finger och penna).
@@ -640,6 +759,8 @@
   //   say      – det som läses upp (och läses igen vid fel / 🔊 Lyssna)
   //   item     – vad som övas, för framstegssidan (t.ex. "-att" eller "7")
   //   choices  – [{ content, label, correct }]
+  //   help     – nod i prompt som döljs tills barnet trycker på "Visa hjälp"
+  //              (t.ex. bilder att räkna på); med hjälp blir det ingen stjärna
   //   praise, choiceClass, onShow(), onRight(), onWrong() – valfria
   function quizRound(root, { gameId, level, tasks, hint, timer, render, onReplay, onLevels }) {
     const tracker = roundTracker(tasks.length);
@@ -650,24 +771,44 @@
     let locked = false;
     let view = null;
     let tiles = [];
+    let helped = false;
+
+    const helpButton = el('button', { class: 'btn btn-help', type: 'button', text: '💡 Visa hjälp', onclick: showHelp });
 
     root.replaceChildren(el('div', { class: 'screen' }, [
       tracker.bar,
       hint ? el('p', { class: 'hint', text: hint }) : null,
       el('div', { class: 'quiz-zone' }, [
         promptBox,
-        el('button', { class: 'btn btn-listen', type: 'button', text: '🔊 Lyssna', onclick: () => speak(view.say, view.lang) })
+        el('div', { class: 'quiz-buttons' }, [
+          el('button', { class: 'btn btn-listen', type: 'button', text: '🔊 Lyssna', onclick: () => speak(view.say, view.lang) }),
+          helpButton
+        ])
       ]),
       choicesBox
     ]));
 
+    function showHelp() {
+      if (helped || locked || !view.help) return;
+      helped = true;
+      view.help.hidden = false;
+      replayClass(view.help, 'pop-in');
+      helpButton.hidden = true;
+    }
+
     function show() {
       mistakes = 0;
       locked = false;
+      helped = false;
       view = render(tasks[index]);
       tracker.current(index);
       promptBox.replaceChildren(view.prompt);
       replayClass(promptBox, 'pop-in');
+      if (view.help) {
+        view.help.classList.add('quiz-help');
+        view.help.hidden = true;
+      }
+      helpButton.hidden = !view.help;
 
       tiles = view.choices.map(choice => {
         const tile = el('button', {
@@ -689,8 +830,11 @@
         locked = true;
         tile.classList.add('right');
         chime('right');
-        progress.recordAnswer(gameId, view.item, mistakes === 0);
-        tracker.mark(index, mistakes === 0);
+        // Med hjälp räknas det inte som rätt på första försöket
+        const clean = mistakes === 0 && !helped;
+        progress.recordAnswer(gameId, view.item, clean);
+        tracker.mark(index, clean);
+        helpButton.hidden = true;
         if (view.onRight) view.onRight();
         timer.later(() => speak(view.praise || praise(), view.praise ? view.lang : null), 350);
         timer.later(next, 2400);
@@ -860,6 +1004,9 @@
   //   steps  – [{ label, emoji | svg | text, caption }] i rätt ordning (samma label = utbytbara)
   //   say, item – som i quizRound
   //   prompt, retry, praise, lang, arrows (pilar mellan rutorna) – valfria
+  //   tileClass   – extra klass på korten
+  //   speakSteps  – läs upp varje rätt kort (bra för barn som inte läser än)
+  //   step.color  – bakgrundsfärg på kortet, även när det ligger på sin plats
   function orderRound(root, { gameId, level, tasks, hint, timer, render, onReplay, onLevels }) {
     const tracker = roundTracker(tasks.length);
     const promptBox = el('div', { class: 'quiz-prompt' });
@@ -912,6 +1059,8 @@
           class: 'tile order-tile', type: 'button', 'aria-label': step.label,
           onclick: () => choose(tile, step)
         }, [stepNode(step)]);
+        if (view.tileClass) tile.classList.add(view.tileClass);
+        if (step.color) tile.style.background = step.color;
         tile.dataset.label = step.label;
         return tile;
       });
@@ -930,8 +1079,12 @@
         tiles.forEach(t => t.classList.remove('nudge'));
         slots[pos].replaceChildren(stepNode(step));
         slots[pos].classList.add('filled');
+        if (step.color) slots[pos].style.background = step.color;
         pos++;
-        if (pos < view.steps.length) return;
+        if (pos < view.steps.length) {
+          if (view.speakSteps) speak(step.label, view.lang);
+          return;
+        }
 
         locked = true;
         slots.forEach(s => s.classList.add('right'));
@@ -1284,7 +1437,7 @@
         recent.length ? el('ul', { class: 'round-list' }, recent.map(r => el('li', null, [
           el('span', { text: formatDate(r.date) }),
           el('span', { class: 'muted', text: r.level || '' }),
-          el('strong', { text: r.score + '/' + r.total })
+          el('strong', { text: r.score + '/' + r.total + (r.grade ? ' · ' + r.grade : '') })
         ]))) : null
       ]);
     });
@@ -1342,6 +1495,8 @@
     const voiceList = el('div', { class: 'choice-list' });
     const rateList = el('div', { class: 'choice-list choice-row' });
     const sample = 'Hej! Så här låter jag när jag läser upp.';
+    const profile = profiles.current();
+    const birthdayBox = el('div');
 
     // Ett val i en lista: markeras när det är valt, med en knapp för att provlyssna
     function choice(label, sub, selected, onSelect, onTry) {
@@ -1357,6 +1512,18 @@
         ]),
         onTry ? el('button', { class: 'btn btn-small', type: 'button', text: '▶ Prova', onclick: onTry }) : null
       ]);
+    }
+
+    function drawBirthday(editing) {
+      const b = profiles.current().birthday;
+      if (b && !editing) {
+        birthdayBox.replaceChildren(el('div', { class: 'birthday-show' }, [
+          el('strong', { text: '🎂 ' + b.day + ' ' + MONTH_NAMES[b.month] }),
+          el('button', { class: 'btn btn-small', type: 'button', text: 'Ändra', onclick: () => drawBirthday(true) })
+        ]));
+      } else {
+        birthdayBox.replaceChildren(birthdayPicker(profile, () => drawBirthday(false)));
+      }
     }
 
     function tryVoice(option) {
@@ -1419,6 +1586,7 @@
 
     drawVoices();
     drawRates();
+    drawBirthday(false);
 
     // Rösterna laddas ibland in en stund efter att sidan öppnats
     window.addEventListener('teachy:voices', drawVoices);
@@ -1432,6 +1600,11 @@
       el('header', { class: 'hub-head' }, [
         el('div', { class: 'intro-icon', text: '⚙️' }),
         el('h1', { text: 'Inställningar' })
+      ]),
+      el('section', { class: 'panel' }, [
+        el('h2', { text: '🎂 ' + profile.name + 's födelsedag' }),
+        el('p', { class: 'muted small', text: 'Används i Kalendern, t.ex. "I vilken månad fyller du år?"' }),
+        birthdayBox
       ]),
       el('section', { class: 'panel' }, [
         el('h2', { text: '🗣️ Uppläsarens röst' }),
@@ -1529,7 +1702,8 @@
     el, shuffle, sample, rand, pick, speak, chime, store, confetti, profiles, progress, formatDate,
     timers, replayClass, topBar, levelScreen, roundTracker, resultScreen, isMuted, setMuted,
     toggle, accuracyReport, praise, orList, draggable, quizRound,
-    picture, sortRound, orderRound, quizGame, sortGame, orderGame, inGrade, numberOptions, slot
+    picture, sortRound, orderRound, quizGame, sortGame, orderGame, inGrade, numberOptions, slot,
+    MONTH_NAMES, birthdayPicker
   };
 
   window.Teachy = Object.assign({ registerGame, start, data: {} }, api);

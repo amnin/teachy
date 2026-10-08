@@ -1,6 +1,7 @@
 /*
- * Räkna – enkla plus- och minusuppgifter. På de lättare nivåerna visas
- * bilder att räkna på, på den svåraste bara siffror.
+ * Räkna – enkla plus- och minusuppgifter. På de lättare nivåerna kan barnet
+ * trycka på "Visa hjälp" för att få bilder att räkna på, på den svåraste
+ * finns bara siffror.
  */
 (function () {
   'use strict';
@@ -117,7 +118,7 @@
       const { el } = T;
       const timer = T.timers();
 
-      // Bildstöd av/på – sparas per profil
+      // Bildhjälp av/på – sparas per profil
       const picturesKey = 'rakna:pictures:' + T.profiles.current().id;
       const picturesOn = () => T.store.get(picturesKey, true);
 
@@ -131,11 +132,11 @@
           title: 'Räkna',
           text: 'Räkna ut svaret och tryck på rätt siffra!',
           levels: LEVELS.map(level => Object.assign({}, level, {
-            sub: !level.pictures ? 'Bara siffror' : on ? 'Med bilder' : 'Utan bilder'
+            sub: !level.pictures ? 'Bara siffror' : on ? 'Hjälp med bilder' : 'Utan bilder'
           })),
           onPick: startRound,
           options: el('div', { class: 'options' }, [
-            T.toggle('Bilder att räkna på', on, value => {
+            T.toggle('Bilder som hjälp', on, value => {
               T.store.set(picturesKey, value);
               showLevels();
             })
@@ -155,6 +156,7 @@
         let locked = false;
         let current = null;
         let tiles = [];
+        let helped = false;
 
         const pictures = el('div', { class: 'math-pictures', 'aria-hidden': 'true' });
         const answerBox = el('span', { class: 'math-answer', text: '?' });
@@ -164,10 +166,17 @@
           class: 'btn btn-listen', type: 'button', text: '🔊 Lyssna',
           onclick: () => T.speak(spoken(current))
         });
+        const help = el('button', {
+          class: 'btn btn-help', type: 'button', text: '💡 Visa hjälp',
+          onclick: showHelp
+        });
 
         root.replaceChildren(el('div', { class: 'screen rakna' }, [
           tracker.bar,
-          el('div', { class: 'math-zone' }, [pictures, equation, listen]),
+          el('div', { class: 'math-zone' }, [
+            pictures, equation,
+            el('div', { class: 'math-buttons' }, [listen, help])
+          ]),
           choices
         ]));
 
@@ -185,21 +194,30 @@
           return node;
         }
 
+        // Bilderna visas först när barnet ber om hjälp, så att talet räknas
+        // ut i huvudet i stället för att bara räkna bilderna
+        function showHelp() {
+          if (helped || locked) return;
+          helped = true;
+          const thing = THINGS[rand(0, THINGS.length - 1)];
+          pictures.replaceChildren(...(current.op === '+'
+            ? [group(current.a, thing), el('span', { class: 'math-sign', text: '+' }), group(current.b, thing)]
+            : [group(current.a, thing, current.a - current.b)]));
+          pictures.hidden = false;
+          T.replayClass(pictures, 'pop-in');
+          help.hidden = true;
+        }
+
         function showProblem() {
           current = problems[index];
           mistakes = 0;
           locked = false;
+          helped = false;
           tracker.current(index);
 
-          if (showPictures) {
-            const thing = THINGS[rand(0, THINGS.length - 1)];
-            pictures.replaceChildren(...(current.op === '+'
-              ? [group(current.a, thing), el('span', { class: 'math-sign', text: '+' }), group(current.b, thing)]
-              : [group(current.a, thing, current.a - current.b)]));
-            pictures.hidden = false;
-          } else {
-            pictures.hidden = true;
-          }
+          pictures.replaceChildren();
+          pictures.hidden = true;
+          help.hidden = !showPictures;
 
           answerBox.textContent = '?';
           answerBox.className = 'math-answer';
@@ -235,8 +253,11 @@
             answerBox.className = 'math-answer right';
             T.chime('right');
 
-            T.progress.recordAnswer('rakna', current.key, mistakes === 0);
-            tracker.mark(index, mistakes === 0);
+            // Med hjälp räknas det inte som rätt på första försöket
+            const clean = mistakes === 0 && !helped;
+            T.progress.recordAnswer('rakna', current.key, clean);
+            tracker.mark(index, clean);
+            help.hidden = true;
 
             timer.later(() => T.speak(spoken(current) + ' är ' + current.answer), 350);
             timer.later(next, 2200);
