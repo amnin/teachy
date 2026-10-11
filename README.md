@@ -39,7 +39,7 @@ games/<spel>/         Ett spel per mapp
    Teachy.registerGame({
      id: 'mitt-spel',           // blir adressen #/mitt-spel
      title: 'Mitt spel',
-     grade: 1,                  // årskurs: 0 = förskoleklass, 1 = åk 1 (se GRADES i js/app.js)
+     grade: 1,                  // årskurs: 0 = förskoleklass, 1–3 = åk 1–3 (se GRADES i js/app.js)
      subject: 'Matematik',      // spel grupperas per ämne inom årskursen
      icon: '➕',
      color: '#3ddc97',
@@ -87,6 +87,12 @@ Allt sparas i webbläsarens `localStorage`, alltså per enhet och webbläsare.
   med bilder att räkna på (kan döljas), samt plus & minus till 20 med bara siffror.
 - **Sortera** (Natur och samhälle) – dra bilden till rätt grupp: djur som simmar,
   går eller flyger, frukt eller grönsak, årstider.
+- **Hänga gubbe** (Svenska) – gissa bokstäverna i ordet. Snäll variant: tio delar,
+  bild på ordet, och gubben räddas om man klarar ordet.
+- **Alfabetståget** (Svenska) – dra bilder till vagnen med ordets första bokstav och
+  låt tåget köra. Svåra nivåer har ord som ska stanna kvar på perrongen.
+- **Kalendern** (Matematik) – dagens datum, veckodagar, igår/imorgon, årstider,
+  månader och "när händer det?". Använder barnets födelsedag (Inställningar).
 
 Spelen utgår från förskoleklassens centrala innehåll i Lgr22.
 **Räkna** finns även i årskurs 1.
@@ -107,6 +113,38 @@ kriterierna för läsförståelse i slutet av åk 1. Filerna ligger i `games/ak1
 - **Engelska:** English words (färger, siffror, djur, mat – engelsk uppläsning)
 - **Teknik:** Datorns delar
 
+## Spel – Årskurs 2 och 3
+
+Utgår från det centrala innehållet för åk 1–3 i Lgr22 (Skolverket) och kriterierna
+för godtagbara kunskaper i slutet av åk 3. Innehållet är gemensamt för åk 1–3, så
+åk 2 och åk 3 skiljer sig främst i svårighet. Här förutsätts att barnet kan läsa
+(svaren är ofta text), men allt läses också upp. Filerna ligger i `games/ak2/` och `games/ak3/`.
+
+**Årskurs 2**
+- **Svenska:** Motsatser, Sammansatta ord, Stava rätt (dubbelteckning)
+- **Matematik:** Räkna till 100 (med räknestrategi som hjälp), Lika grupper
+  (multiplikation som upprepad addition), Pengar (mynt, sedlar, växel), Mäta
+- **NO:** Återvinning, Djurgrupper
+- **SO:** Högtider (kristendom, islam, judendom), Väderstreck
+
+**Årskurs 3**
+- **Svenska:** Ordklasser, Ord och känslor (känsloord, synonymer), Svåra ljud
+  (sj-, tj-, j- och ng-ljud)
+- **Matematik:** Gångertabellen (och division), Talen till 1000, Klockan
+  (kvart, fem minuter, hur lång tid), Bråk av antal
+- **NO:** Rymden (dygn, år, månen, planeterna), Kraft och rörelse
+- **SO:** Världen (världsdelar, länder, hav), Tidslinjen, Tillsammans
+  (barnkonventionen, demokrati, samhället)
+
+**Belöningar** (`js/rewards.js`): nivåer efter samlade stjärnor (Nybörjare → Legend),
+märken (t.ex. tre dagar i rad, alla rätt, Kämpe, prova alla spel i en årskurs),
+dagens utmaning (ett spel per dag, +5 bonusstjärnor) och veckans mål (4 speldagar).
+Syns på startsidan, på resultatskärmen och under 📊 Framsteg. Märken räknas fram
+ur sparade rundor, så de som redan spelat får sina märken direkt.
+
+Varje runda avslutas med ett betyg A–F (50 % rätt eller mindre är F, sedan ett steg
+per 10 %). F visas alltid uppmuntrande.
+
 Gemensam data: ord med bilder i `data/words.js`, bilder till lägesord i `data/scenes.js`.
 
 ## Byggstenar för nya spel
@@ -116,6 +154,8 @@ De flesta spel är bara data + en liten `render`-funktion. Välj typ:
 - `T.quizGame(def)` – flervalsfrågor. Exempel: `games/ak1/tiotal.js` (≈50 rader).
 - `T.sortGame(def)` – dra bilder till rätt grupp. Bara data, se `games/ak1/flyter.js`.
 - `T.orderGame(def)` – tryck i rätt ordning. Se `games/ak1/livscykel.js`.
+- `T.factGame(def)` – frågespel direkt från listor, utan egen `render`:
+  `questions: [[fråga, bild, rättSvar, felsvar, …]]`. Se `games/ak2/motsatser.js`.
 - Eget gränssnitt: `T.registerGame` + `T.levelScreen`, `T.roundTracker`,
   `T.resultScreen`, `T.timers`. Se `games/ak1/robot.js`.
 

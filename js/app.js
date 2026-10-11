@@ -13,7 +13,9 @@
   // Årskurser – varje spel anger sin med grade: 0, 1, ...
   const GRADES = [
     { id: 0, name: 'Årskurs 0', sub: 'Förskoleklass' },
-    { id: 1, name: 'Årskurs 1', sub: 'Första klass' }
+    { id: 1, name: 'Årskurs 1', sub: 'Första klass' },
+    { id: 2, name: 'Årskurs 2', sub: 'Andra klass' },
+    { id: 3, name: 'Årskurs 3', sub: 'Tredje klass' }
   ];
 
   // Ordning för ämnena på startsidan
@@ -629,8 +631,13 @@
     progress.recordRound(gameId, { level: level.name, score, total, stars: score, grade: step.grade });
     confetti();
 
+    // Nya märken, ny nivå och dagens utmaning (js/rewards.js)
+    const rewards = window.Teachy.rewards;
+    const news = rewards ? rewards.afterRound(gameId) : null;
+
     const name = profiles.current().name;
-    speak(step.say(name));
+    speak((score === total ? 'Fantastiskt, ' + name + '! Alla rätt! Du fick ett A!' : step.say(name)) +
+      (news ? ' ' + rewards.resultSpeech(news) : ''));
 
     root.replaceChildren(el('div', { class: 'screen' }, [
       topBar(),
@@ -639,10 +646,11 @@
         el('h1', { text: step.title(name) }),
         el('div', { class: 'result-grade grade-' + step.grade }, [
           el('span', { class: 'result-grade-letter', text: step.grade }),
-          el('span', { class: 'result-grade-text', text: GRADE_TEXT[step.grade] })
+          el('span', { class: 'result-grade-text', text: score === total ? 'Alla rätt på första försöket! 🎉' : GRADE_TEXT[step.grade] })
         ]),
         el('p', { class: 'result-stars', text: '⭐'.repeat(score) + '☆'.repeat(total - score) }),
         el('p', { text: 'Du fick ' + score + ' av ' + total + ' stjärnor.' }),
+        news ? rewards.resultNode(news) : null,
         el('div', { class: 'result-actions' }, [
           el('button', { class: 'btn btn-big', type: 'button', text: step.grade === 'F' ? 'Försök igen' : 'Spela igen', onclick: onReplay }),
           el('button', { class: 'btn btn-big btn-ghost', type: 'button', text: 'Byt nivå', onclick: onLevels })
@@ -1169,6 +1177,47 @@
     defineGame(def, quizRound);
   }
 
+  // Frågespel direkt från listor med frågor. Varje nivå har
+  //   questions: [[fråga, bild | null, rätt svar, felsvar, felsvar, …], …]
+  // Frågan kan vara [visas, läses upp] när de ska skilja sig åt, och med
+  // readOptions: false läses svarsalternativen inte upp (t.ex. felstavade ord).
+  // där ett svar är 'ord' eller ['emoji', 'ord']. Ett tredje fält i svaret,
+  // ['emoji', 'ord', 'beröm'], läses upp som beröm när det är rätt (emoji kan vara null).
+  // choices (antal svarsknappar, standard 3) kan anges per nivå.
+  function factGame(def) {
+    quizGame(Object.assign({
+      makeTasks: (level, n) => sample(level.questions, n),
+      report: { title: def.reportTitle || 'Områden', keys: def.levels.map(l => l.name) },
+      render: (task, level) => {
+        const [asked, pic, right, ...wrong] = task;
+        const [question, spoken] = Array.isArray(asked) ? asked : [asked, asked];
+        const readOptions = level.readOptions !== false && def.readOptions !== false;
+        const answers = shuffle([right, ...sample(wrong, (level.choices || 3) - 1)]);
+        const word = a => (Array.isArray(a) ? a[1] : a);
+        const pictured = answers.some(a => Array.isArray(a) && a[0]);
+        return {
+          prompt: el('div', { class: 'fact-task' }, [
+            pic ? el('div', { class: 'fact-picture', text: pic }) : null,
+            el('p', { class: 'read-sentence', text: question })
+          ]),
+          say: readOptions ? spoken + ' ' + orList(answers.map(word)) + '?' : spoken,
+          retry: spoken,
+          praise: Array.isArray(right) && right[2] ? right[2] : null,
+          item: level.name,
+          choiceClass: pictured ? 'pic-tile' : 'word-tile',
+          choices: answers.map(a => ({
+            label: word(a),
+            correct: a === right,
+            content: [
+              Array.isArray(a) && a[0] ? el('span', { class: 'tile-emoji', text: a[0] }) : null,
+              el('span', { class: 'tile-word', text: word(a) })
+            ]
+          }))
+        };
+      }
+    }, def));
+  }
+
   function orderGame(def) {
     defineGame(def, orderRound);
   }
@@ -1348,6 +1397,7 @@
       el('h1', { text: 'Teachy' }),
       el('p', { text: 'Vad vill du spela idag, ' + profile.name + '?' })
     ]));
+    if (window.Teachy.rewards) app.append(window.Teachy.rewards.hubPanel(profile, grade));
 
     app.append(el('nav', { class: 'grade-tabs', 'aria-label': 'Årskurs' }, GRADES.map(g =>
       el('button', {
@@ -1397,7 +1447,9 @@
   function renderProgress(app, profile) {
     const all = progress.all(profile.id);
     const played = games.filter(g => all[g.id] && all[g.id].rounds.length);
-    const totalStars = games.reduce((sum, g) => sum + progress.game(g.id, profile.id).stars, 0);
+    // Med bonusstjärnor från dagens utmaning
+    const totalStars = window.Teachy.rewards ? window.Teachy.rewards.totalStars(profile)
+      : games.reduce((sum, g) => sum + progress.game(g.id, profile.id).stars, 0);
     const totalRounds = played.reduce((sum, g) => sum + all[g.id].rounds.length, 0);
     const lastDate = played
       .map(g => all[g.id].rounds[all[g.id].rounds.length - 1].date)
@@ -1476,6 +1528,7 @@
         stat('🎮', totalRounds, 'rundor'),
         stat('📅', lastDate ? formatDate(lastDate) : '–', 'senast spelat')
       ]),
+      window.Teachy.rewards ? window.Teachy.rewards.progressPanel(profile) : null,
       // Spelen grupperade per årskurs
       ...GRADES.flatMap(grade => {
         const own = games.filter(g => [].concat(g.grade)[0] === grade.id);
@@ -1702,7 +1755,8 @@
     el, shuffle, sample, rand, pick, speak, chime, store, confetti, profiles, progress, formatDate,
     timers, replayClass, topBar, levelScreen, roundTracker, resultScreen, isMuted, setMuted,
     toggle, accuracyReport, praise, orList, draggable, quizRound,
-    picture, sortRound, orderRound, quizGame, sortGame, orderGame, inGrade, numberOptions, slot,
+    picture, sortRound, orderRound, quizGame, sortGame, orderGame, factGame, inGrade, numberOptions, slot,
+    GRADES, allGames: () => games.slice(),
     MONTH_NAMES, birthdayPicker
   };
 
